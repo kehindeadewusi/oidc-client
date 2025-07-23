@@ -1,0 +1,22 @@
+authorizationURL := fmt.Sprintf(
+	"https://%s/authorize?audience=https://api.snapmaster.io"+
+		"&scope=openid"+
+		"&response_type=code&client_id=%s"+
+		"&code_challenge=%s"+
+		"&code_challenge_method=S256&redirect_uri=%s",
+	authDomain, clientID, codeChallenge, redirectURL)
+
+http: //localhost:8080/authorize?scope=openid&response_type=code&client_id=client1&redirect_uri=http%3A%2F%2Flocalhost%3A8081
+
+http: //localhost:8080/authorize?nonce=0764081784&scope=openid&response_type=code&client_id=client1&redirect_uri=http%3A%2F%2Flocalhost%3A8081
+
+https: //accounts.organogram.xyz/realms/organogram/protocol/openid-connect/auth?
+// client_id=ws-people-frontend&
+// redirect_uri=https%3A%2F%2Fpeople.organogram.app%2Fsign-in&
+// state=5e3c8f65-7663-44ea-8101-f4a8e567cb24&
+// response_mode=fragment&
+// response_type=code&
+// scope=openid&
+// nonce=aa1a2355-3be9-46c0-87b0-322df11d63f8&
+// code_challenge=g6jUEyWvdGO3vB28x_YYmfLgJJgmnB48iJkhPtwtF1o&
+// code_challenge_method=S256
