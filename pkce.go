@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -32,10 +31,12 @@ func startPkce(c *gin.Context) {
 	authorizationURL := fmt.Sprintf(
 		"%s/authorize?audience=wsthings"+
 			"&scope=openid"+
-			"&response_type=code&client_id=%s"+
+			"&response_type=code"+
+			"&client_id=%s"+
 			"&code_challenge=%s"+
-			"&code_challenge_method=S256&redirect_uri=%s",
-		issuer, clientId, codeChallenge, url.QueryEscape(callbackPKCE))
+			"&code_challenge_method=S256"+
+			"&redirect_uri=%s",
+		issuer, clientId, codeChallenge, url.QueryEscape(callbackURL+"/pkce"))
 
 	// open a browser window to the authorizationURL
 	err = open.Start(authorizationURL)
@@ -45,20 +46,24 @@ func startPkce(c *gin.Context) {
 	}
 }
 
-func pkceCode(c *gin.Context) {
+func pkce(c *gin.Context) {
 	code := c.Query("code")
 	fmt.Printf("received code %s\n", code)
 
 	codeVerifier := CodeVerifier.String()
-	token, err := getAccessToken(codeVerifier, code)
+	accessToken, idToken, err := getAccessToken(codeVerifier, code)
 	if err != nil {
 		fmt.Println(err)
-	} else {
-		fmt.Println(token)
+		return
 	}
+
+	fmt.Println(idToken)
+
+	introspect(accessToken) //on the backend (resource server/API)
+	userInfo(accessToken)
 }
 
-func getAccessToken(codeVerifier, authorizationCode string) (string, error) {
+func getAccessToken(codeVerifier, authorizationCode string) (string, string, error) {
 	// set the url and form-encoded data for the POST to the access token endpoint
 	url := tokenEndpoint
 	data := fmt.Sprintf(
@@ -66,7 +71,7 @@ func getAccessToken(codeVerifier, authorizationCode string) (string, error) {
 			"&code_verifier=%s"+
 			"&code=%s"+
 			"&redirect_uri=%s",
-		clientId, codeVerifier, authorizationCode, callbackPKCE,
+		clientId, codeVerifier, authorizationCode, callbackURL+"/pkce",
 	)
 	payload := strings.NewReader(data)
 
@@ -76,7 +81,7 @@ func getAccessToken(codeVerifier, authorizationCode string) (string, error) {
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		fmt.Printf("snap: HTTP error: %s", err)
-		return "", err
+		return "", "", err
 	}
 
 	// process the response
@@ -88,24 +93,25 @@ func getAccessToken(codeVerifier, authorizationCode string) (string, error) {
 	err = json.Unmarshal(body, &responseData)
 	if err != nil {
 		fmt.Printf("snap: JSON error: %s", err)
-		return "", err
+		return "", "", err
 	}
 
 	// retrieve the access token out of the map, and return to caller
 	accessToken := responseData["access_token"].(string)
-	return accessToken, nil
+	idToken := responseData["id_token"].(string)
+
+	return accessToken, idToken, nil
 }
 
 // To send a token introspection request to an OIDC authorization server
-func introspect() {
-	introspectionEndpoint := "YOUR_INTROSPECTION_ENDPOINT_URL" // Replace with actual URL
-	accessToken := "YOUR_ACCESS_TOKEN"                         // Replace with the token to introspect
-	clientID := "YOUR_CLIENT_ID"                               // Optional: if client authentication is needed
-	clientSecret := "YOUR_CLIENT_SECRET"                       // Optional: if client authentication is needed
+func introspect(token string) {
+	introspectionEndpoint := fmt.Sprintf("%s/introspect", issuer)
 
 	data := url.Values{}
-	data.Set("token", accessToken)
-	// data.Set("token_type_hint", "access_token") // Optional hint
+	data.Set("token", token)
+	data.Set("token_type_hint", "access_token") // Optional hint
+	data.Set("client_id", clientId)
+	data.Set("client_secret", clientSecret)
 
 	client := &http.Client{}
 	req, err := http.NewRequest("POST", introspectionEndpoint, strings.NewReader(data.Encode()))
@@ -117,9 +123,9 @@ func introspect() {
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
 	// Add client authentication if required
-	if clientID != "" && clientSecret != "" {
-		req.SetBasicAuth(clientID, clientSecret)
-	}
+	// if clientId != "" && clientSecret != "" {
+	// 	req.SetBasicAuth(clientId, clientSecret)
+	// }
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -128,7 +134,7 @@ func introspect() {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Println("Error reading response body:", err)
 		return
@@ -147,4 +153,55 @@ func introspect() {
 	} else {
 		fmt.Println("Token is inactive or invalid.")
 	}
+}
+
+// To send a token introspection request to an OIDC authorization server
+func userInfo(token string) {
+	userInfoEndpoint := fmt.Sprintf("%s/userinfo", issuer)
+
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", userInfoEndpoint, nil)
+	if err != nil {
+		fmt.Println("Error creating request:", err)
+		return
+	}
+
+	req.Header.Add("Authorization", "Bearer "+token)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Println("Error sending request:", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println("Error reading response body:", err)
+		return
+	}
+	fmt.Println(string(body))
+
+	var result map[string]interface{}
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		fmt.Println("Error unmarshaling JSON:", err)
+		return
+	}
+
+	// Alternative way to parse user info into a struct
+	// type UserInfo struct {
+	// 	Sub           string `json:"sub"`
+	// 	Name          string `json:"name,omitempty"`
+	// 	Email         string `json:"email,omitempty"`
+	// 	EmailVerified bool   `json:"email_verified,omitempty"`
+	// 	// Add other claims as needed based on your IdP and requested scopes
+	// }
+	// var userInfo UserInfo
+	// if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
+	// 	fmt.Printf("Error decoding UserInfo response: %v\n", err)
+	// 	return
+	// }
+
+	// fmt.Printf("User Info: %+v\n", userInfo)
 }
